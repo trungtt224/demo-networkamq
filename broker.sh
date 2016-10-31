@@ -1,36 +1,54 @@
 #!/bin/bash 
 USAGE="USAGE: run {build|run|clean}"
-NUM_BROKER=2
+DEVICE_BROKERS=2
+SERVICE_BROKERS=3
+NC_TTL=5
 DUPLEX=true
 alias echo='echo "[INFO]" '
-
+ 
 function buildImage() 
 {
 	echo "Building image..."
-	docker build -t amq:activemq2 .
+	docker build -t amq:activeMQ .
 }
 
 function startAMQBroker()
 {
-	echo "Starting brokers..."
-	for (( i = 1; i <= $NUM_BROKER; i++ )); do
-		startBroker "$i"
+	startServiceBroker
+	startDeviceBroker
+}
+
+function startServiceBroker()
+{	
+	echo "Creating Service Brokers....."
+	for ((i = 1; i <= $SERVICE_BROKERS; i++)); 
+	do
+		docker run -d -P --name service_broker_$i --env BROKER_NAME=service_broker_$i amq:activeMQ 
+		transportConnector=$(docker port service_broker_$i)
+		echo "Service_Broker_$i : $transportConnector"
 	done
 }
 
-function startBroker()
-{	
-	if (( $1 == 1 ));
-	then 
-		echo "Starting Broker-AMQ_$1 "
-		docker run -d -P --name amq$1 -d -P amq:activemq2
-	else
-		echo "Starting Broker-AMQ_$1 "
-		amqLink=$(( $1 - 1 ))
-		docker run -d -P --name amq$1 -d -P --link amq$amqLink:amq$amqLink --env DUPLEX=$DUPLEX amq:activemq2
-	fi
-	echo "Tranport connector of Broker-AMQ_$1"
-	docker port amq$1
+function startDeviceBroker()
+{
+	echo "Creating Device Brokers....."
+	TCP_CLUSTER_NODES=""
+	# TCP_CLUSTER_NODES=$(docker inspect --format '{{ .NetworkSettings.IPAddress }}' $(docker ps -f "name=service_broker" --format "{{.Names}}")) 
+	SERVICE_BROKERS_LIST=$(docker ps -f "name=service_broker" --format "{{.Names}}")
+	for i in $SERVICE_BROKERS_LIST
+	do
+		OUTPUT="--link $i:$i "
+		TCP_CLUSTER_NODES="$TCP_CLUSTER_NODES$OUTPUT"
+	done
+
+	for ((i = 1; i <= $DEVICE_BROKERS; i++ )); 
+	do
+		echo $TCP_CLUSTER_NODES
+		docker run -d -P --name device_broker_$i $TCP_CLUSTER_NODES --env DUPLEX=$DUPLEX amq:activeMQ
+		# docker run -it $TCP_CLUSTER_NODES --env DUPLEX=$DUPLEX --env BROKER_NAME=device_broker_$i amq:activeMQ /bin/bash
+		transportConnector=$(docker port device_broker_$i)
+		echo "Device_Broker_$i : $transportConnector"
+	done
 }
 
 function remove(){
